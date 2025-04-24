@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conway's Game of Life</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+        #grid {
+            display: grid;
+            border: 2px solid #333;
+            background-color: #fff;
+        }
+        .cell {
+            width: 10px;
+            height: 10px;
+            border: 1px solid #ddd;
+            box-sizing: border-box;
+        }
+        .dead {
+            background-color: #fff;
+        }
+        .alive {
+            background-color: #000;
+        }
+        #controls {
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 0 10px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <button id="startBtn">Start</button>
+        <button id="stopBtn">Stop</button>
+        <button id="randomizeBtn">Randomize</button>
+    </div>
+    <div id="grid"></div>
+
+    <script>
+        const CONFIG = {
+            GRID_SIZE: 50,
+            CANVAS_SIZE: 500,
+            CELL_SIZE: 500 / 50, // 10px per cell
+            UPDATE_INTERVAL: 33, // milliseconds
+            RANDOM_ALIVE_PROB: 0.2
+        };
+
+        // Grid class: Manages cell states and Conway's rules
+        class Grid {
+            constructor(size) {
+                this.size = size;
+                this.cells = Array(size).fill().map(() => Array(size).fill('dead'));
+                this.nextCells = Array(size).fill().map(() => Array(size).fill('dead'));
+                this.aliveCells = [];
+            }
+
+            randomize(prob) {
+                this.aliveCells = [];
+                for (let i = 0; i < this.size; i++) {
+                    for (let j = 0; j < this.size; j++) {
+                        this.cells[i][j] = Math.random() < prob ? 'alive' : 'dead';
+                        if (this.cells[i][j] === 'alive') this.aliveCells.push([i, j]);
+                    }
+                }
+            }
+
+            toggleCell(row, col) {
+                if (this.cells[row][col] === 'dead') {
+                    this.cells[row][col] = 'alive';
+                    this.aliveCells.push([row, col]);
+                } else {
+                    this.cells[row][col] = 'dead';
+                    const index = this.aliveCells.findIndex(([r, c]) => r === row && c === col);
+                    if (index !== -1) this.aliveCells.splice(index, 1);
+                }
+            }
+
+            countNeighbors(row, col) {
+                let count = 0;
+                for (let di = -1; di <= 1; di++) {
+                    for (let dj = -1; dj <= 1; dj++) {
+                        if (di === 0 && dj === 0) continue;
+                        const ni = (row + di + this.size) % this.size;
+                        const nj = (col + dj + this.size) % this.size;
+                        if (this.cells[ni][nj] === 'alive') count++;
+                    }
+                }
+                return count;
+            }
+
+            update() {
+                const newAliveCells = [];
+                for (let i = 0; i < this.size; i++) {
+                    for (let j = 0; j < this.size; j++) {
+                        const neighbors = this.countNeighbors(i, j);
+                        const current = this.cells[i][j];
+
+                        if (current === 'alive') {
+                            this.nextCells[i][j] = (neighbors === 2 || neighbors === 3) ? 'alive' : 'dead';
+                        } else {
+                            this.nextCells[i][j] = (neighbors === 3) ? 'alive' : 'dead';
+                        }
+                        if (this.nextCells[i][j] === 'alive') newAliveCells.push([i, j]);
+                    }
+                }
+
+                [this.cells, this.nextCells] = [this.nextCells, this.cells];
+                this.aliveCells = newAliveCells;
+            }
+        }
+
+        // SquareRenderer class: Handles CSS grid rendering
+        class SquareRenderer {
+            constructor(gridElement, gridSize, cellSize) {
+                this.gridElement = gridElement;
+                this.gridSize = gridSize;
+                this.cellSize = cellSize;
+                this.cells = [];
+                this.initializeGrid();
+            }
+
+            initializeGrid() {
+                this.gridElement.style.gridTemplateColumns = `repeat(${this.gridSize}, ${this.cellSize}px)`;
+                this.cells = [];
+                for (let i = 0; i < this.gridSize; i++) {
+                    for (let j = 0; j < this.gridSize; j++) {
+                        const cell = document.createElement('div');
+                        cell.className = 'cell dead';
+                        cell.dataset.row = i;
+                        cell.dataset.col = j;
+                        this.gridElement.appendChild(cell);
+                        this.cells[i * this.gridSize + j] = cell;
+                    }
+                }
+            }
+
+            draw(aliveCells) {
+                // Reset all to dead, then update alive cells
+                this.cells.forEach(cell => cell.className = 'cell dead');
+                for (const [row, col] of aliveCells) {
+                    const index = row * this.gridSize + col;
+                    this.cells[index].className = 'cell alive';
+                }
+            }
+        }
+
+        // InputHandler class: Manages user input
+        class InputHandler {
+            constructor(gridElement, grid, renderer, startBtn, stopBtn, randomizeBtn) {
+                this.gridElement = gridElement;
+                this.grid = grid;
+                this.renderer = renderer;
+                this.startBtn = startBtn;
+                this.stopBtn = stopBtn;
+                this.randomizeBtn = randomizeBtn;
+                this.startCallback = null;
+                this.stopCallback = null;
+            }
+
+            initialize() {
+                this.gridElement.addEventListener('click', (event) => this.handleClick(event));
+                this.startBtn.addEventListener('click', () => this.startCallback?.());
+                this.stopBtn.addEventListener('click', () => this.stopCallback?.());
+                this.randomizeBtn.addEventListener('click', () => {
+                    this.grid.randomize(CONFIG.RANDOM_ALIVE_PROB);
+                    this.renderer.draw(this.grid.aliveCells);
+                    this.stopCallback?.();
+                });
+                this.stopBtn.disabled = true;
+            }
+
+            handleClick(event) {
+                const target = event.target;
+                if (target.classList.contains('cell')) {
+                    const row = parseInt(target.dataset.row);
+                    const col = parseInt(target.dataset.col);
+                    this.grid.toggleCell(row, col);
+                    this.renderer.draw(this.grid.aliveCells);
+                }
+            }
+
+            setStartCallback(callback) {
+                this.startCallback = callback;
+            }
+
+            setStopCallback(callback) {
+                this.stopCallback = callback;
+            }
+
+            updateButtons(isRunning) {
+                this.startBtn.disabled = isRunning;
+                this.stopBtn.disabled = !isRunning;
+            }
+        }
+
+        // Simulation class: Coordinates grid, renderer, and input
+        class Simulation {
+            constructor(grid, renderer, inputHandler, updateInterval) {
+                this.grid = grid;
+                this.renderer = renderer;
+                this.inputHandler = inputHandler;
+                this.updateInterval = updateInterval;
+                this.isRunning = false;
+                this.intervalId = null;
+            }
+
+            initialize() {
+                this.grid.randomize(CONFIG.RANDOM_ALIVE_PROB); // Randomize on load
+                this.renderer.draw(this.grid.aliveCells);
+                this.inputHandler.initialize();
+                this.inputHandler.setStartCallback(() => this.start());
+                this.inputHandler.setStopCallback(() => this.stop());
+            }
+
+            start() {
+                if (!this.isRunning) {
+                    this.isRunning = true;
+                    this.intervalId = setInterval(() => this.update(), this.updateInterval);
+                    this.inputHandler.updateButtons(true);
+                }
+            }
+
+            stop() {
+                if (this.isRunning) {
+                    this.isRunning = false;
+                    clearInterval(this.intervalId);
+                    this.inputHandler.updateButtons(false);
+                }
+            }
+
+            update() {
+                this.grid.update();
+                this.renderer.draw(this.grid.aliveCells);
+            }
+        }
+
+        // Initialize simulation
+        (function () {
+            const gridElement = document.getElementById('grid');
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            const randomizeBtn = document.getElementById('randomizeBtn');
+
+            const grid = new Grid(CONFIG.GRID_SIZE);
+            const renderer = new SquareRenderer(gridElement, CONFIG.GRID_SIZE, CONFIG.CELL_SIZE);
+            const inputHandler = new InputHandler(gridElement, grid, renderer, startBtn, stopBtn, randomizeBtn);
+            const simulation = new Simulation(grid, renderer, inputHandler, CONFIG.UPDATE_INTERVAL);
+
+            simulation.initialize();
+        })();
+    </script>
+</body>
+</html>
